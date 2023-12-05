@@ -19,12 +19,19 @@ class Score {
             cout << "\nThe score is: " << m_score;
         }
     public:
+        //When we use && to declare a reference variable, we are telling the
+        //compiler that the reference should bind to a temporary object.
+        Score(Score&& sc) {
+            cout << "\nMove constructor";
+            this->m_score = sc.get_score();
+            sc.~Score();
+        }
         Score(const Score& sc) {
-            cout << "\ncopy constructor";
+            cout << "\nCopy constructor";
             this->m_score = sc.get_score();
         }
         Score& operator=(const Score& sc) {
-            cout << "\nassignment operator";
+            cout << "\nAssignment operator";
             if (this != &sc) {
                 this->m_score = sc.get_score();
             }
@@ -33,7 +40,7 @@ class Score {
         // We are modifying whats inside so we have to mention
         // return value as a reference to a object.
         Score& operator++() {
-            cout << "\npre ++ operator";
+            cout << "\nPre ++ operator";
             this->m_score += 1;
             return *this;
         }
@@ -45,7 +52,7 @@ class Score {
         // where the increment itself is the main purpose, not necessarily the
         // returned original value.
         Score operator++([[maybe_unused]] int q) {
-            cout << "\npost ++ operator";
+            cout << "\nPost ++ operator";
             Score tmp(this->m_score);
             this->m_score += 1;
             return tmp;
@@ -62,26 +69,25 @@ int main(int argv, char** argc)
     Score sc2(0);
     sc2 = sc1++;
     cout << "\nsc2 = sc1++";
-    cout << "\nThe score [1 | 2] : " << endl;
     sc1.print();
     sc2.print();
     sc2 = ++sc1;
     cout << "\nsc2 = ++sc1";
-    cout << "\nThe score [1 | 2] : " << endl;
     sc1.print();
     sc2.print();
     sc2 = sc1++;
     cout << "\nScore sc3 = sc2";
-    cout << "\nThe score 3 : " << endl;
     Score sc3 = sc2;
     sc3.print();
     sc3++;
     cout << "\nsc3++";
-    cout << "\nThe score 3 : " << endl;
     sc3.print();
     sc1 = sc3++;
     cout << "\nsc1 = sc3++";
-    cout << "\nThe score 3 : " << endl;
+    sc3.print();
+    Score sc4(move(sc3));
+    cout << "\nsc4(std::move(sc3))";
+    sc4.print();
     sc3.print();
     cout << endl;
     return 1;
