@@ -13,29 +13,23 @@
 #include <functional>
 
 using namespace std;
-using f_type = std::function<int(int)>;
 
+// f() that returns int and takes two int input arguments
 std::function<int(int, int)> get_mult1()
 {
     return [](int a, int b){ return a * b; };
 }
 
-f_type get_mult2_0()
+// f(int) that returns int and takes one int input arguments
+std::function<int(int)> mult2(int y)
 {
-    return [](int a){ return 1 * a; };
-}
-
-
-std::function<int(int), (int)> get_mult2()
-{
-    auto f = get_mult2_0();
-    return [&f](f_type a, int b){ return f(a) * b; };
+    return [y](int x) { return y * x; };
 }
 
 int main(int argv, char** argc)
 {
+    // mult1 is object with type of std::function<int(int, int)>
     auto mult1 = get_mult1();
-    auto mult2 = get_mult2();
     cout << "Mult(3,4) = " << mult1(3, 4);
     cout << endl;
     cout << "Mult(3)(4) = " << mult2(3)(4);
