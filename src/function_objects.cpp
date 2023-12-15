@@ -7,6 +7,9 @@
     The mission in the following example is to multiply 3 with 4 with a function
     that looks like this:
         ``mult(3)(4);``
+
+    This concept is called "currying" that means a transformation of a function
+    of several arguments to a function of a single argument.
 */
 
 #include <iostream>
