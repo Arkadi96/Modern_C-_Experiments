@@ -1,13 +1,27 @@
 /*
-    In the following example ilustrated how to write c compatible code blocks
-    using c++ compilers. To see how compiler treated cg() function we should make 
-    assembly of cpp file.
-        $g++ -S src/compatible_with_c.cpp
+    In this example one of the common mismatches is introduced.
+    Declaration of pointers in the same line.
 
-    This will create .s file in which we can see that all functions expect cg()
-    have unique names like `Zviiv1`, cg() function name remained the same.
+    Introduced typdef as more convenient way to create types
+    that are compile time resolved (cant use for templates).
+
+    in C++ 11 using keyboard is first introduced, than in c++14 it is widely
+    recommended and adopted as a main type alias because of:
+        1. flexibility within templates.
+        2. Consistency with other language features.
+        3. Readability and clarity of intent.
+
+    Golden rules as conclusion:
+        1. To have const value prefer const over #define
+        2. To have several values prefer enum over #define
+        3. To define type prefer typdef over #define
+        4. To create macros prefer inline or constexpr functions over #define
+        5. To have conditional compiling. its #define 100%
 
     Keywords:
+        1. typdef
+        2. using
+        3. error: int* to int
 */
 
 #include <iostream>
