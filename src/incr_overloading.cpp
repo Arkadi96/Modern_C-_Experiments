@@ -21,11 +21,15 @@ class Score {
     public:
         //When we use && to declare a reference variable, we are telling the
         //compiler that the reference should bind to a temporary object.
+        //MOVE means TRANSFERRING THE OWNERSHIP
+        //that is why we calling destructor at the end.
         Score(Score&& sc) {
             cout << "\nMove constructor";
             this->m_score = sc.get_score();
             sc.~Score();
         }
+        //COPY means DONT MODIFY SOURCE
+        //that is why we say const (by the way)
         Score(const Score& sc) {
             cout << "\nCopy constructor";
             this->m_score = sc.get_score();
