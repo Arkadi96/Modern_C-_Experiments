@@ -23,10 +23,6 @@ static ssize_t device_file_read (
         return 0;
     }
 
-    if (*possition >= g_s_custom_string_size) {
-        return 0;
-    }
-
     if (*possition + count > g_s_custom_string_size) {
         count = g_s_custom_string_size - *possition;
     }
