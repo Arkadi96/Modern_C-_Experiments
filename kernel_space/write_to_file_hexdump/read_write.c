@@ -13,7 +13,7 @@ MODULE_DESCRIPTION("LKM with an device number");
 /* Globals needed for hexdump */
 #define LINE_SIZE 16
 #define LINE_END 10 // ASCII Line feed
-#define BUFFER_SIZE 15
+#define BUFFER_SIZE 255
 #define OUTPUT_FILE "/tmp/loop"
 
 /* Globals needed for driver */
@@ -33,6 +33,9 @@ static void hexdump_write(struct file* o, char* c) {
 
 /* This function prints address into a file */
 static void address_write(struct file* o, unsigned int a) {
+    //if (a > 0x1FFFF) {
+    //    printk("a : %x\n", a);
+    //}
     char hex_buffer[8];
     snprintf(hex_buffer, 8, "%07x", a);
     kernel_write(o, hex_buffer, 7, 0);
@@ -40,13 +43,15 @@ static void address_write(struct file* o, unsigned int a) {
 
 /* This function reads data from the buffer */
 static ssize_t driver_write(struct file *File, const char *user_buffer, size_t count, loff_t *offs) {
+    printk("count numb : %x\n", count);
     int to_copy, not_copied, i;
-    unsigned int v_addr = 0;
+    static unsigned int v_addr = 0;
     short el_cnt = 0;
     unsigned int total_written = 0;
-    char fb, sb;
+    char fb, sb, tmp;
     bool f = true;
     bool l = false;
+    bool t = false;
 
     /* Buffer for data */
     static char* buffer = NULL;
@@ -64,15 +69,25 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
     }
 
     while (count > 0) {
-        printk("count %d, to_copy %d", count, to_copy);
+        //printk("count %d, to_copy %d", count, to_copy);
         to_copy = min(count, BUFFER_SIZE);
         if (copy_from_user(buffer, user_buffer, to_copy)) {
             kfree(buffer);
             printk("Failed to copy from user buffer\n");
             return -1;
         }
+        if (t) {
+            fb = tmp;
+            sb = buffer[0];
+            el_cnt = 2;
+            v_addr += el_cnt;
+            hexdump_write(output_file, &sb);
+            hexdump_write(output_file, &fb);
+        }
         int i;
-        for (i = 0; i < to_copy; i+=2) {
+        i = (t) ? 1 : 0;
+        t = false;
+        for (i; i < to_copy; i+=2) {
             if (v_addr % LINE_SIZE == 0) {
                 if (!f) {
                     kernel_write(output_file, "\n", 1, 0);
@@ -86,17 +101,30 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
                 sb = buffer[i + 1];
                 el_cnt = 2;
             }
+            if ((i == to_copy - 1) && (count - to_copy > 0)) {
+                t = true;
+                tmp = buffer[i];
+            }
+            if ((i == to_copy - 1) && (count - to_copy <= 0)) {
+                t = false;
+                fb = buffer[to_copy - 1];
+                sb = 0;
+                el_cnt = 1;
+            }
             if (count - to_copy <= 0) {
                 l = true;
-                if (i == to_copy - 1) {
-                    fb = buffer[to_copy - 1];
-                    sb = 0;
-                    el_cnt = 1;
-                }
             }
-            v_addr += el_cnt;
-            hexdump_write(output_file, &sb);
-            hexdump_write(output_file, &fb);
+            if (!t) {
+                v_addr += el_cnt;
+                if (v_addr == 0x20000) 
+                    {
+                        if (l) {printk("l is true\n");}
+                        if (f) {printk("f is true\n");}
+                        printk("i: %d, to_copy: %d, el_cnt: %d, count: %d\n", i, to_copy, el_cnt, count);
+                    }
+                hexdump_write(output_file, &sb);
+                hexdump_write(output_file, &fb);
+            }
         }
         if (l) {
             kernel_write(output_file, "\n", 1, 0);
