@@ -6,23 +6,18 @@
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
 
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Arkadi Hakobyan");
-MODULE_DESCRIPTION("LKM for hexdumping files");
-
-/* Globals needed for hexdump */
-#define LINE_SIZE 16
-#define LINE_END 10 // ASCII Line feed
-#define BUFFER_SIZE 255
-#define OUTPUT_FILE "/tmp/loop"
-
-/* Globals needed for driver */
 #define DEVICE_NAME "hexdump"
+#define LINE_SIZE 16
+#define BUFFER_SIZE 65536
+#define OUTPUT_FILE "/tmp/loop"
+#define IS_LITTLE_ENDIAN (*(unsigned char *)&(uint16_t){1})
 
 /* Variables for device and device class */
-static dev_t my_device_nr;
-static struct class *my_class;
-static struct cdev my_device;
+static char* local_buffer = NULL;
+static struct file* output_file = NULL;
+static dev_t dev_device_nr;
+static struct class *dev_class;
+static struct cdev dev_device;
 
 /* This function hexdumps into a file */
 static void hexdump_write(struct file* o, char* c) {
@@ -33,9 +28,6 @@ static void hexdump_write(struct file* o, char* c) {
 
 /* This function prints address into a file */
 static void address_write(struct file* o, unsigned int a) {
-    //if (a > 0x1FFFF) {
-    //    printk("a : %x\n", a);
-    //}
     char hex_buffer[8];
     snprintf(hex_buffer, 8, "%07x", a);
     kernel_write(o, hex_buffer, 7, 0);
@@ -43,7 +35,7 @@ static void address_write(struct file* o, unsigned int a) {
 
 /* This function reads data from the buffer */
 static ssize_t driver_write(struct file *File, const char *user_buffer, size_t count, loff_t *offs) {
-    printk("count numb : %x\n", count);
+    //printk("count numb : %x\n", count);
     int to_copy, not_copied, i;
     static unsigned int v_addr = 0;
     short el_cnt = 0;
@@ -53,32 +45,16 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
     bool l = false;
     bool t = false;
 
-    /* Buffer for data */
-    static char* buffer = NULL;
-    buffer = kmalloc(BUFFER_SIZE, GFP_KERNEL);
-    if (!buffer) {
-        printk("Failed to allocate local buffer\n");
-        return -1;
-    }
-
-    struct file *output_file;
-    output_file = filp_open(OUTPUT_FILE, O_CREAT | O_WRONLY | O_APPEND | O_LARGEFILE, 0666);
-    if (IS_ERR(output_file)) {
-        printk("Failed to open output file \n");
-        return -1;
-    }
-
     while (count > 0) {
         //printk("count %d, to_copy %d", count, to_copy);
         to_copy = min(count, BUFFER_SIZE);
-        if (copy_from_user(buffer, user_buffer, to_copy)) {
-            kfree(buffer);
+        if (copy_from_user(local_buffer, user_buffer, to_copy)) {
             printk("Failed to copy from user buffer\n");
             return -1;
         }
         if (t) {
             fb = tmp;
-            sb = buffer[0];
+            sb = local_buffer[0];
             el_cnt = 2;
             v_addr += el_cnt;
             hexdump_write(output_file, &sb);
@@ -97,17 +73,17 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
             }
             kernel_write(output_file, " ", 1, 0);
             if (i != to_copy - 1) {
-                fb = buffer[i];
-                sb = buffer[i + 1];
+                fb = local_buffer[i];
+                sb = local_buffer[i + 1];
                 el_cnt = 2;
             }
             if ((i == to_copy - 1) && (count - to_copy > 0)) {
                 t = true;
-                tmp = buffer[i];
+                tmp = local_buffer[i];
             }
             if ((i == to_copy - 1) && (count - to_copy <= 0)) {
                 t = false;
-                fb = buffer[to_copy - 1];
+                fb = local_buffer[to_copy - 1];
                 sb = 0;
                 el_cnt = 1;
             }
@@ -116,12 +92,11 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
             }
             if (!t) {
                 v_addr += el_cnt;
-                if (v_addr == 0x20000) 
-                    {
-                        if (l) {printk("l is true\n");}
-                        if (f) {printk("f is true\n");}
-                        printk("i: %d, to_copy: %d, el_cnt: %d, count: %d\n", i, to_copy, el_cnt, count);
-                    }
+                //if (v_addr == 0x20000) {
+                //    //if (l) {printk("l is true\n");}
+                //    //if (f) {printk("f is true\n");}
+                //    //printk("i: %d, to_copy: %d, el_cnt: %d, count: %d\n", i, to_copy, el_cnt, count);
+                //}
                 hexdump_write(output_file, &sb);
                 hexdump_write(output_file, &fb);
             }
@@ -135,104 +110,68 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
         count -= to_copy;
         user_buffer += to_copy;
     }
-
-    filp_close(output_file, NULL);
-    kfree(buffer);
     return total_written;
 }
 
-//    /* Get amount of data to copy */
-//    to_copy = min(count, (size_t)BUFFER_SIZE);
-//
-//    /* Copy data from user */
-//    not_copied = copy_from_user(buffer, user_buffer, to_copy);
-//
-//    /* Convert data to hex and write to output file */
-//    output_file = filp_open(OUTPUT_FILE, O_CREAT | O_WRONLY | O_APPEND | O_LARGEFILE, 0666);
-//    if (IS_ERR(output_file)) {
-//        printk("Error in opening: %ld\n", (long)output_file);
-//        return -1;
-//    }
-//    if (output_file == NULL) {
-//        printk("Error in opening: null\n");
-//        return -1;
-//    }
-//    /* Iterating through buffer and writing into a file */
-//    int el_cnt = 0;
-//    for (i = 0; i < to_copy; i += 2) {
-//        if (i % LINE_SIZE == 0) {
-//            address_write(output_file, &v_addr);
-//            el_cnt = 0;
-//        }
-//        kernel_write(output_file, " ", 1, 0);
-//        if (i == to_copy - 1) {
-//            fb = buffer[to_copy - 1];
-//            sb = 0;
-//            el_cnt += 1;
-//        } else {
-//            fb = buffer[i];
-//            sb = buffer[i + 1];
-//            el_cnt += 2;
-//        }
-//        hexdump_write(output_file, &sb);
-//        hexdump_write(output_file, &fb);
-//
-//        // if this is the last iteration
-//        if (i + 2 >= to_copy) {
-//            v_addr -= LINE_SIZE;
-//            v_addr += el_cnt;
-//            address_write(output_file, &v_addr);
-//            kernel_write(output_file, "\n", 1, 0);
-//        }
-//    }
-//    filp_close(output_file, NULL);
-//    return to_copy;
-//}
-
 /* This function is called when the device file is opened */
 static int driver_open(struct inode *device_file, struct file *instance) {
-    printk("dev nr - open was called!\n");
+    /* Open / Create the output file for writing */
+    output_file = filp_open(OUTPUT_FILE, O_CREAT | O_WRONLY | O_APPEND | O_LARGEFILE, 0666);
+    if (IS_ERR(output_file)) {
+        printk("Failed to open output file \n");
+        return -1;
+    }
+
+    /* Buffer for data */
+    local_buffer = kmalloc(BUFFER_SIZE, GFP_KERNEL);
+    if (!local_buffer) {
+        printk("Failed to allocate local buffer\n");
+        return -1;
+    }
+    printk("The device is opened\n");
     return 0;
 }
 
 /* This function is called when the device file is closed */
 static int driver_close(struct inode *device_file, struct file *instance) {
-    printk("dev nr - close was called!\n");
+    filp_close(output_file, NULL);
+    kfree(local_buffer);
+    printk("The device is closed\n");
     return 0;
 }
 
 static struct file_operations fops = {
     .owner = THIS_MODULE,
     .open = driver_open,
-    .release = driver_close,
-    .write = driver_write
+    .write = driver_write,
+    .release = driver_close
 };
 
 static int __init ModuleInit(void) {
     /* Allocating a device nr */
-    if (alloc_chrdev_region(&my_device_nr, 0, 1, DEVICE_NAME) < 0) {
+    if (alloc_chrdev_region(&dev_device_nr, 0, 1, DEVICE_NAME) < 0) {
         printk("Device Nr. could not be allocated\n");
         return -1;
     }
-    printk("hexdump - Device Nr. Major: %d, Minor: %d was registered!\n", my_device_nr >> 20, my_device_nr && 0xfffff);
+    printk("hexdump - Device Nr. Major: %d, Minor: %d was registered!\n", dev_device_nr >> 20, dev_device_nr && 0xfffff);
 
     /* Create device class */
-    if ((my_class = class_create(THIS_MODULE, DEVICE_NAME)) == NULL) {
+    if ((dev_class = class_create(THIS_MODULE, DEVICE_NAME)) == NULL) {
         printk("Device class can not be created!\n");
         goto ClassError;
     }
 
     /* Create device file */
-    if (device_create(my_class, NULL, my_device_nr, NULL, DEVICE_NAME) == NULL) {
+    if (device_create(dev_class, NULL, dev_device_nr, NULL, DEVICE_NAME) == NULL) {
         printk("Device class can not be created!\n");
         goto FileError;
     }
 
     /* Initialize device file */
-    cdev_init(&my_device, &fops);
+    cdev_init(&dev_device, &fops);
 
     /* Registering device to kernel */
-    if (cdev_add(&my_device, my_device_nr, 1) == -1) {
+    if (cdev_add(&dev_device, dev_device_nr, 1) == -1) {
         printk("Registering of device to kernel failed class can not be created!\n");
         goto AddError;
     }
@@ -240,22 +179,27 @@ static int __init ModuleInit(void) {
     return 0;
 
 AddError:
-    device_destroy(my_class, my_device_nr);
+    device_destroy(dev_class, dev_device_nr);
 FileError:
-    class_destroy(my_class);
+    class_destroy(dev_class);
 ClassError:
-    unregister_chrdev(my_device_nr, DEVICE_NAME);
+    unregister_chrdev(dev_device_nr, DEVICE_NAME);
 
     return -1;
 }
 
 static void __exit ModuleExit(void) {
-    cdev_del(&my_device);
-    device_destroy(my_class, my_device_nr);
-    class_destroy(my_class);
-    unregister_chrdev(my_device_nr, DEVICE_NAME);
+    device_destroy(dev_class, dev_device_nr);
+    class_destroy(dev_class);
+    cdev_del(&dev_device);
+    unregister_chrdev(dev_device_nr, DEVICE_NAME);
     printk("%s exit", DEVICE_NAME);
 }
 
 module_init(ModuleInit);
 module_exit(ModuleExit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Arkadi Hakobyan");
+MODULE_DESCRIPTION("LKM for hexdumping files");
+
