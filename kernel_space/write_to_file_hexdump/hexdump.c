@@ -10,6 +10,7 @@
 #define LINE_SIZE 16
 #define BUFFER_SIZE 65536
 #define OUTPUT_FILE "/tmp/loop"
+#define WRITE_KERNEL_LIMIT 0x20000
 #define IS_LITTLE_ENDIAN (*(unsigned char *)&(uint16_t){1})
 
 /* Variables for device and device class */
@@ -92,18 +93,26 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
             }
             if (!t) {
                 v_addr += el_cnt;
-                //if (v_addr == 0x20000) {
-                //    //if (l) {printk("l is true\n");}
-                //    //if (f) {printk("f is true\n");}
-                //    //printk("i: %d, to_copy: %d, el_cnt: %d, count: %d\n", i, to_copy, el_cnt, count);
-                //}
                 hexdump_write(output_file, &sb);
                 hexdump_write(output_file, &fb);
             }
         }
         if (l) {
-            kernel_write(output_file, "\n", 1, 0);
-            address_write(output_file, v_addr);
+            if (v_addr % WRITE_KERNEL_LIMIT != 0) {
+                /* Fill the line with spaces*/
+                unsigned int p_addr = (v_addr / 16) * 16;
+                printk("last addr : %x\n", p_addr);
+                size_t r_d = LINE_SIZE - (v_addr - p_addr);
+                r_d = (r_d % 2 == 1) ? r_d - 1 : r_d;
+                printk("rem bytes : %d\n", r_d);
+                int c;
+                for (c = 0; c < r_d; c += 2) {
+                    kernel_write(output_file, "     ", 5, 0);
+                }
+                kernel_write(output_file, "\n", 1, 0);
+                address_write(output_file, v_addr);
+                v_addr = 0;
+            }
             kernel_write(output_file, "\n", 1, 0);
         }
         total_written += to_copy;
