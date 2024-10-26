@@ -20,18 +20,34 @@ static dev_t dev_device_nr;
 static struct class *dev_class;
 static struct cdev dev_device;
 
-/* This function hexdumps into a file */
-static void hexdump_write(struct file* o, char* c) {
+/* This function checks the return of  kernel_write */
+static void check_kernel_write(size_t r) {
+    if (r < 0) {
+        printk(KERN_WARNING
+               "Warning: Could not write to file: %zd\n", r);
+    }
+}
+
+/* This function write hex char into a file */
+static void hex_char_write(struct file* o, char* c) {
     char hexbuffer[3];
     snprintf(hexbuffer, 3, "%02x", (unsigned char)*c);
     kernel_write(o, hexbuffer, 2, 0);
 }
 
-/* This function prints address into a file */
-static void address_write(struct file* o, unsigned int a) {
+/* This function writes hex address into a file */
+static void hex_addr_write(struct file* o, unsigned int a) {
+    static bool f = true;
+    size_t r;
     char hex_buffer[8];
     snprintf(hex_buffer, 8, "%07x", a);
-    kernel_write(o, hex_buffer, 7, 0);
+    if (!f) {
+        r = kernel_write(o, "\n", 1, 0);
+        check_kernel_write(r);
+    }
+    r = kernel_write(o, hex_buffer, 7, 0);
+    check_kernel_write(r);
+    f = false;
 }
 
 /* This function reads data from the buffer */
@@ -42,7 +58,6 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
     short el_cnt = 0;
     unsigned int total_written = 0;
     char fb, sb, tmp;
-    bool f = true;
     bool l = false;
     bool t = false;
 
@@ -58,19 +73,15 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
             sb = local_buffer[0];
             el_cnt = 2;
             v_addr += el_cnt;
-            hexdump_write(output_file, &sb);
-            hexdump_write(output_file, &fb);
+            hex_char_write(output_file, &sb);
+            hex_char_write(output_file, &fb);
         }
         int i;
         i = (t) ? 1 : 0;
         t = false;
         for (i; i < to_copy; i+=2) {
             if (v_addr % LINE_SIZE == 0) {
-                if (!f) {
-                    kernel_write(output_file, "\n", 1, 0);
-                }
-                f = false;
-                address_write(output_file, v_addr);
+                hex_addr_write(output_file, v_addr);
             }
             kernel_write(output_file, " ", 1, 0);
             if (i != to_copy - 1) {
@@ -93,24 +104,21 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
             }
             if (!t) {
                 v_addr += el_cnt;
-                hexdump_write(output_file, &sb);
-                hexdump_write(output_file, &fb);
+                hex_char_write(output_file, &sb);
+                hex_char_write(output_file, &fb);
             }
         }
         if (l) {
             if (v_addr % WRITE_KERNEL_LIMIT != 0) {
                 /* Fill the line with spaces*/
                 unsigned int p_addr = (v_addr / 16) * 16;
-                printk("last addr : %x\n", p_addr);
                 size_t r_d = LINE_SIZE - (v_addr - p_addr);
                 r_d = (r_d % 2 == 1) ? r_d - 1 : r_d;
-                printk("rem bytes : %d\n", r_d);
                 int c;
                 for (c = 0; c < r_d; c += 2) {
                     kernel_write(output_file, "     ", 5, 0);
                 }
-                kernel_write(output_file, "\n", 1, 0);
-                address_write(output_file, v_addr);
+                hex_addr_write(output_file, v_addr);
                 v_addr = 0;
             }
             kernel_write(output_file, "\n", 1, 0);
