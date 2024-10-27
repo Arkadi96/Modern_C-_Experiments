@@ -21,7 +21,7 @@ static dev_t dev_device_nr;
 static struct class *dev_class;
 static struct cdev dev_device;
 static unsigned int v_addr = 0;
-static size_t rep_valid_line = 0;
+static size_t rep_valid_idx = 0;
 static bool rep_valid = false;
 static bool f = true; // first iter
 
@@ -84,6 +84,7 @@ static void hex_repeated_write(void) {
 static size_t compare_substrings(size_t i, size_t j, size_t l) {
     size_t c = 0;
     for (; c < l; ++c) {
+        printk("comparing %c with %c", local_buffer[i + c], local_buffer[j + c]);
         if (local_buffer[i + c] != local_buffer[j + c])
             return 0;
     }
@@ -97,8 +98,9 @@ static size_t check_repetition(size_t i, size_t s) {
         return 0;
     }
     if (!rep_valid) {
-        if (compare_substrings(i - s + 1, i, s)) {
-            rep_valid_line = i;
+        printk("!rep_valid i: %d", i);
+        if (compare_substrings(i - s, i, s)) {
+            rep_valid_idx = i - s;
             rep_valid = true;
             hex_repeated_write();
             return 1;
@@ -107,7 +109,8 @@ static size_t check_repetition(size_t i, size_t s) {
             return 0;
         }
     } else {
-        if (compare_substrings(rep_valid_line - s + 1, i, s)) {
+        printk("rep_valid i: %d", i);
+        if (compare_substrings(rep_valid_idx, i, s)) {
             return 1;
         } else {
             rep_valid = false;
@@ -134,12 +137,14 @@ static void empty_data_write(void) {
     size_t r, c;
     unsigned int p_addr;
     /* Count uncompleted data count in line */
-    p_addr = (v_addr / 16) * 16;
-    r_d = LINE_SIZE - (v_addr - p_addr);
-    r_d = (r_d % 2 == 1) ? r_d - 1 : r_d;
-    for (c = 0; c < r_d; c += 2) {
-        r = kernel_write(output_file, "     ", 5, 0);
-        check_kernel_write(r);
+    if (v_addr % LINE_SIZE != 0) {
+        p_addr = (v_addr / LINE_SIZE) * LINE_SIZE;
+        r_d = LINE_SIZE - (v_addr - p_addr);
+        r_d = (r_d % 2 == 1) ? r_d - 1 : r_d;
+        for (c = 0; c < r_d; c += 2) {
+            r = kernel_write(output_file, "     ", 5, 0);
+            check_kernel_write(r);
+        }
     }
 }
 
@@ -194,7 +199,7 @@ static int driver_close(struct inode *device_file, struct file *instance) {
     if (!rep_valid) { empty_data_write();}
     hex_addr_write();
     v_addr = 0;
-    rep_valid_line = 0;
+    rep_valid_idx = 0;
     rep_valid = false;
     f = true;
     filp_close(output_file, NULL);
