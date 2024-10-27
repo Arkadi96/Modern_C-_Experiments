@@ -20,6 +20,8 @@ static struct file* output_file = NULL;
 static dev_t dev_device_nr;
 static struct class *dev_class;
 static struct cdev dev_device;
+static unsigned int v_addr = 0;
+static bool f = true; // first iter
 
 /* This function checks the return of  kernel_write */
 static void check_kernel_write(size_t r) {
@@ -94,9 +96,7 @@ static void empty_data_write(struct file* o, unsigned int a) {
 /* This function reads data from the buffer */
 static ssize_t driver_write(struct file *File, const char *user_buffer, size_t count, loff_t *offs) {
     int to_copy;
-    static unsigned int v_addr = 0;
     unsigned int total_written = 0;
-    static bool f = true; // first iter
 
     while (count > 0) {
         to_copy = min(count, BUFFER_SIZE);
@@ -116,10 +116,6 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
         count -= to_copy;
         user_buffer += to_copy;
     }
-    empty_data_write(output_file, v_addr);
-    hex_addr_write(output_file, v_addr, f);
-    v_addr = 0;
-    f = true;
     return total_written;
 }
 
@@ -143,6 +139,10 @@ static int driver_open(struct inode *device_file, struct file *instance) {
 
 /* This function is called when the device file is closed */
 static int driver_close(struct inode *device_file, struct file *instance) {
+    empty_data_write(output_file, v_addr);
+    hex_addr_write(output_file, v_addr, f);
+    v_addr = 0;
+    f = true;
     filp_close(output_file, NULL);
     kfree(local_buffer);
     printk("The device is closed\n");
