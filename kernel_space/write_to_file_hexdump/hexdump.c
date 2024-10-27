@@ -76,6 +76,21 @@ void hex_data_write(struct file* o, size_t l, size_t s) {
     }
 }
 
+/* This function writes fills uncompleted spaces of the last line */
+static void empty_data_write(struct file* o, unsigned int a) {
+    size_t r_d;
+    size_t r, c;
+    unsigned int p_addr;
+    /* Count uncompleted data count in line */
+    p_addr = (a / 16) * 16;
+    r_d = LINE_SIZE - (a - p_addr);
+    r_d = (r_d % 2 == 1) ? r_d - 1 : r_d;
+    for (c = 0; c < r_d; c += 2) {
+        r = kernel_write(output_file, "     ", 5, 0);
+        check_kernel_write(r);
+    }
+}
+
 /* This function reads data from the buffer */
 static ssize_t driver_write(struct file *File, const char *user_buffer, size_t count, loff_t *offs) {
     int to_copy;
@@ -101,6 +116,7 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
         count -= to_copy;
         user_buffer += to_copy;
     }
+    empty_data_write(output_file, v_addr);
     hex_addr_write(output_file, v_addr, f);
     v_addr = 0;
     f = true;
