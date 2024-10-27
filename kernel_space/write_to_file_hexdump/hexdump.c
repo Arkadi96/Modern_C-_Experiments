@@ -10,20 +10,19 @@
 #define DEVICE_NAME "hexdump"
 #define LINE_SIZE 16
 #define BUFFER_SIZE 65536
-#define DATA_SIZE LINE_SIZE + LINE_SIZE / 2
 #define OUTPUT_FILE "/tmp/loop"
 #define IS_LITTLE_ENDIAN (*(unsigned char *)&(uint16_t){1})
 
 /* Variables for device and device class */
 static char* local_buffer = NULL;
 static struct file* output_file = NULL;
-static dev_t dev_device_nr;
 static struct class *dev_class;
 static struct cdev dev_device;
+static dev_t dev_device_nr;
 static unsigned int v_addr = 0;
 static size_t rep_valid_idx = 0;
 static bool rep_valid = false;
-static bool f = true; // first iter
+static bool is_first_iter = true;
 
 /* This function checks the return of  kernel_write */
 static void check_kernel_write(size_t r) {
@@ -60,7 +59,7 @@ static void hex_addr_write(void) {
     size_t r;
     char hex_buffer[8];
     snprintf(hex_buffer, 8, "%07x", v_addr);
-    if (!f) {
+    if (!is_first_iter) {
         r = kernel_write(output_file, "\n", 1, 0);
         check_kernel_write(r);
     }
@@ -70,9 +69,8 @@ static void hex_addr_write(void) {
 
 /* This function writes repetition symbol into a file */
 static void hex_repeated_write(void) {
-    static bool pr = false;
     size_t r;
-    if (!f) {
+    if (!is_first_iter) {
         r = kernel_write(output_file, "\n", 1, 0);
         check_kernel_write(r);
         r = kernel_write(output_file, "*", 1, 0);
@@ -84,7 +82,6 @@ static void hex_repeated_write(void) {
 static size_t compare_substrings(size_t i, size_t j, size_t l) {
     size_t c = 0;
     for (; c < l; ++c) {
-        printk("comparing %c with %c", local_buffer[i + c], local_buffer[j + c]);
         if (local_buffer[i + c] != local_buffer[j + c])
             return 0;
     }
@@ -98,7 +95,6 @@ static size_t check_repetition(size_t i, size_t s) {
         return 0;
     }
     if (!rep_valid) {
-        printk("!rep_valid i: %d", i);
         if (compare_substrings(i - s, i, s)) {
             rep_valid_idx = i - s;
             rep_valid = true;
@@ -109,7 +105,6 @@ static size_t check_repetition(size_t i, size_t s) {
             return 0;
         }
     } else {
-        printk("rep_valid i: %d", i);
         if (compare_substrings(rep_valid_idx, i, s)) {
             return 1;
         } else {
@@ -148,23 +143,23 @@ static void empty_data_write(void) {
     }
 }
 
-/* This function reads data from the buffer */
+/* This function write data from the buffer to the output file */
 static ssize_t driver_write(struct file *File, const char *user_buffer, size_t count, loff_t *offs) {
-    int to_copy;
+    size_t to_copy, s, i;
     unsigned int total_written = 0;
-
+    /* Core logic, iterating line by line over user buffer, processing data */
     while (count > 0) {
-        to_copy = min(count, BUFFER_SIZE);
+        to_copy = min(count, (size_t)BUFFER_SIZE);
         if (copy_from_user(local_buffer, user_buffer, to_copy)) {
             printk("Failed to copy from user buffer\n");
             return -1;
         }
-        size_t i = 0;
+        i = 0;
         for (; i < to_copy; i += LINE_SIZE) {
-            size_t s = to_copy - i >= LINE_SIZE ? LINE_SIZE : to_copy - i;
+            s = to_copy - i >= LINE_SIZE ? LINE_SIZE : to_copy - i;
             if (!check_repetition(i, s)) {
               hex_addr_write();
-              f = false;
+              is_first_iter = false;
               hex_data_write(i, s);
             }
             v_addr += s;
@@ -196,12 +191,15 @@ static int driver_open(struct inode *device_file, struct file *instance) {
 
 /* This function is called when the device file is closed */
 static int driver_close(struct inode *device_file, struct file *instance) {
+    size_t r;
     if (!rep_valid) { empty_data_write();}
     hex_addr_write();
+    r = kernel_write(output_file, "\n", 1, 0);
+    check_kernel_write(r);
     v_addr = 0;
     rep_valid_idx = 0;
     rep_valid = false;
-    f = true;
+    is_first_iter = true;
     filp_close(output_file, NULL);
     kfree(local_buffer);
     printk("The device is closed\n");
@@ -225,27 +223,27 @@ static int __init ModuleInit(void) {
     /* Create device class */
     if ((dev_class = class_create(THIS_MODULE, DEVICE_NAME)) == NULL) {
         printk("Device class can not be created!\n");
-        goto ClassError;
+        goto class_error;
     }
     /* Create device file */
     if (device_create(dev_class, NULL, dev_device_nr, NULL, DEVICE_NAME) == NULL) {
         printk("Device class can not be created!\n");
-        goto FileError;
+        goto file_error;
     }
     /* Initialize device file */
     cdev_init(&dev_device, &fops);
     /* Registering device to kernel */
     if (cdev_add(&dev_device, dev_device_nr, 1) == -1) {
         printk("Registering of device to kernel failed class can not be created!\n");
-        goto AddError;
+        goto add_error;
     }
     return 0;
 
-AddError:
+add_error:
     device_destroy(dev_class, dev_device_nr);
-FileError:
+file_error:
     class_destroy(dev_class);
-ClassError:
+class_error:
     unregister_chrdev(dev_device_nr, DEVICE_NAME);
 
     return -1;
