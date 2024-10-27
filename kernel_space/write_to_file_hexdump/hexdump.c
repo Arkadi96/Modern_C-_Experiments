@@ -5,13 +5,13 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
+#include <linux/string.h>
 
 #define DEVICE_NAME "hexdump"
 #define LINE_SIZE 16
 #define BUFFER_SIZE 65536
 #define DATA_SIZE LINE_SIZE + LINE_SIZE / 2
 #define OUTPUT_FILE "/tmp/loop"
-#define WRITE_KERNEL_LIMIT 0x20000
 #define IS_LITTLE_ENDIAN (*(unsigned char *)&(uint16_t){1})
 
 /* Variables for device and device class */
@@ -21,6 +21,8 @@ static dev_t dev_device_nr;
 static struct class *dev_class;
 static struct cdev dev_device;
 static unsigned int v_addr = 0;
+static size_t rep_valid_line = 0;
+static bool rep_valid = false;
 static bool f = true; // first iter
 
 /* This function checks the return of  kernel_write */
@@ -32,60 +34,108 @@ static void check_kernel_write(size_t r) {
 }
 
 /* This function writes hex char into a file */
-static void hex_char_write(struct file* o, char c) {
+static void hex_char_write(char c) {
     char hexbuffer[3];
     size_t r;
     snprintf(hexbuffer, 3, "%02x", (unsigned char)c);
-    r = kernel_write(o, hexbuffer, 2, 0);
+    r = kernel_write(output_file, hexbuffer, 2, 0);
     check_kernel_write(r);
 }
 
 /* This function writes pair of hex chars into a file */
-static void hex_chars_write(struct file* o, char f, char s) {
-    size_t r = kernel_write(o, " ", 1, 0);
+static void hex_chars_write(char f, char s) {
+    size_t r = kernel_write(output_file, " ", 1, 0);
     check_kernel_write(r);
     if (IS_LITTLE_ENDIAN) {
-        hex_char_write(o, s);
-        hex_char_write(o, f);
+        hex_char_write(s);
+        hex_char_write(f);
     } else {
-        hex_char_write(o, f);
-        hex_char_write(o, s);
+        hex_char_write(f);
+        hex_char_write(s);
     }
 }
 
 /* This function writes hex address into a file */
-static void hex_addr_write(struct file* o, unsigned int a, bool f) {
+static void hex_addr_write(void) {
     size_t r;
     char hex_buffer[8];
-    snprintf(hex_buffer, 8, "%07x", a);
+    snprintf(hex_buffer, 8, "%07x", v_addr);
     if (!f) {
-        r = kernel_write(o, "\n", 1, 0);
+        r = kernel_write(output_file, "\n", 1, 0);
         check_kernel_write(r);
     }
-    r = kernel_write(o, hex_buffer, 7, 0);
+    r = kernel_write(output_file, hex_buffer, 7, 0);
     check_kernel_write(r);
 }
 
+/* This function writes repetition symbol into a file */
+static void hex_repeated_write(void) {
+    static bool pr = false;
+    size_t r;
+    if (!f) {
+        r = kernel_write(output_file, "\n", 1, 0);
+        check_kernel_write(r);
+        r = kernel_write(output_file, "*", 1, 0);
+        check_kernel_write(r);
+    }
+}
+
+/* This function writes repetition symbol into a file */
+static size_t compare_substrings(size_t i, size_t j, size_t l) {
+    size_t c = 0;
+    for (; c < l; ++c) {
+        if (local_buffer[i + c] != local_buffer[j + c])
+            return 0;
+    }
+    return 1;
+}
+
+/* This function checks for repetition */
+static size_t check_repetition(size_t i, size_t s) {
+    /* No repetition when first line or uncompleted line left*/
+    if (i == 0) {
+        return 0;
+    }
+    if (!rep_valid) {
+        if (compare_substrings(i - s + 1, i, s)) {
+            rep_valid_line = i;
+            rep_valid = true;
+            hex_repeated_write();
+            return 1;
+        } else {
+            rep_valid = false;
+            return 0;
+        }
+    } else {
+        if (compare_substrings(rep_valid_line - s + 1, i, s)) {
+            return 1;
+        } else {
+            rep_valid = false;
+            return 0;
+        }
+    }
+}
+
 /* This function checks for repeating lines and returns the line in hex */
-void hex_data_write(struct file* o, size_t l, size_t s) {
+void hex_data_write(size_t l, size_t s) {
     /* Fill buffer with empty spaces */
     char fb, sb;
     size_t i = 0;
     for (; i < s; i += 2) {
         fb = local_buffer[l + i];
         sb = local_buffer[l + i + 1];
-        hex_chars_write(o, fb, sb);
+        hex_chars_write(fb, sb);
     }
 }
 
 /* This function writes fills uncompleted spaces of the last line */
-static void empty_data_write(struct file* o, unsigned int a) {
+static void empty_data_write(void) {
     size_t r_d;
     size_t r, c;
     unsigned int p_addr;
     /* Count uncompleted data count in line */
-    p_addr = (a / 16) * 16;
-    r_d = LINE_SIZE - (a - p_addr);
+    p_addr = (v_addr / 16) * 16;
+    r_d = LINE_SIZE - (v_addr - p_addr);
     r_d = (r_d % 2 == 1) ? r_d - 1 : r_d;
     for (c = 0; c < r_d; c += 2) {
         r = kernel_write(output_file, "     ", 5, 0);
@@ -107,9 +157,11 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
         size_t i = 0;
         for (; i < to_copy; i += LINE_SIZE) {
             size_t s = to_copy - i >= LINE_SIZE ? LINE_SIZE : to_copy - i;
-            hex_addr_write(output_file, v_addr, f);
-            f = false;
-            hex_data_write(output_file, i, s);
+            if (!check_repetition(i, s)) {
+              hex_addr_write();
+              f = false;
+              hex_data_write(i, s);
+            }
             v_addr += s;
         }
         total_written += to_copy;
@@ -139,9 +191,11 @@ static int driver_open(struct inode *device_file, struct file *instance) {
 
 /* This function is called when the device file is closed */
 static int driver_close(struct inode *device_file, struct file *instance) {
-    empty_data_write(output_file, v_addr);
-    hex_addr_write(output_file, v_addr, f);
+    if (!rep_valid) { empty_data_write();}
+    hex_addr_write();
     v_addr = 0;
+    rep_valid_line = 0;
+    rep_valid = false;
     f = true;
     filp_close(output_file, NULL);
     kfree(local_buffer);
