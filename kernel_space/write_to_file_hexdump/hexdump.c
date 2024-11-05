@@ -5,6 +5,7 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
 #include <linux/string.h>
 
 #define DEVICE_NAME "hexdump"
@@ -12,6 +13,12 @@
 #define BUFFER_SIZE 65536
 #define OUTPUT_FILE "/tmp/loop"
 #define IS_LITTLE_ENDIAN (*(unsigned char *)&(uint16_t){1})
+
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION( 6, 4, 0 ) )
+  #define HAVE_CLASS_WITHOUT_OWNER  1
+#else
+  #define HAVE_CLASS_WITHOUT_OWNER  0
+#endif
 
 /* Variables for device and device class */
 static char* local_buffer = NULL;
@@ -221,7 +228,12 @@ static int __init ModuleInit(void) {
     }
     printk("hexdump - Device Nr. Major: %d, Minor: %d was registered!\n", dev_device_nr >> 20, dev_device_nr && 0xfffff);
     /* Create device class */
-    if ((dev_class = class_create(THIS_MODULE, DEVICE_NAME)) == NULL) {
+#if HAVE_CLASS_WITHOUT_OWNER
+    dev_class = class_create(DEVICE_NAME);
+#else
+    dev_class = class_create(THIS_MODULE, DEVICE_NAME);
+#endif
+    if (dev_class == NULL) {
         printk("Device class can not be created!\n");
         goto class_error;
     }
