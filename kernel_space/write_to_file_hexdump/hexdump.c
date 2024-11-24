@@ -9,11 +9,10 @@
 #include <linux/string.h>
 
 #define DEVICE_NAME "hexdump"
-#define LINE_SIZE 48
+#define LINE_SIZE 50
 #define DATA_LINE_SIZE 16
 #define BUFFER_SIZE 65536
 #define OUTPUT_FILE "/tmp/loop"
-#define OUTPUT_FILE_TMP "/tmp/loop_tmp"
 #define IS_LITTLE_ENDIAN (*(unsigned char *)&(uint16_t){1})
 
 #if ( LINUX_VERSION_CODE >= KERNEL_VERSION( 6, 4, 0 ) )
@@ -31,9 +30,9 @@ static struct class *dev_class;
 static struct cdev dev_device;
 static dev_t dev_device_nr;
 static unsigned int v_addr = 0;
-static size_t rep_valid_idx = 0;
 static bool rep_valid = false;
 static bool is_first_iter = true;
+static char rep_array[DATA_LINE_SIZE];
 
 /* This function checks the return of  kernel_write */
 static void check_kernel_write(size_t r) {
@@ -67,13 +66,19 @@ static void hex_chars_write(char f, char s) {
 
 /* This function writes hex address into a file */
 static void hex_addr_write(void) {
-    char hex_buffer[8];
-    size_t i;
-    snprintf(hex_buffer, 8, "%07x", v_addr);
+    char hex_buffer[10];
+    size_t i, l;
+    if (v_addr >> 28) {
+        l = 8;
+        snprintf(hex_buffer, 9, "%08x", v_addr);
+    } else {
+        l = 7;
+        snprintf(hex_buffer, 8, "%07x", v_addr);
+    }
     if (!is_first_iter) {
         line_buffer[line_idx++] = '\n';
     }
-    for (i = 0; i < 7; ++i) {
+    for (i = 0; i < l; ++i) {
         line_buffer[line_idx++] = hex_buffer[i];
     }
 }
@@ -87,10 +92,10 @@ static void hex_repeated_write(void) {
 }
 
 /* This function writes repetition symbol into a file */
-static size_t compare_substrings(size_t i, size_t j, size_t l) {
-    size_t c = 0;
-    for (; c < l; ++c) {
-        if (local_buffer[i + c] != local_buffer[j + c])
+static size_t compare_substrings(size_t j, size_t l) {
+    size_t c;
+    for (c = 0; c < l; ++c) {
+        if (rep_array[c] != local_buffer[j + c])
             return 0;
     }
     return 1;
@@ -99,35 +104,29 @@ static size_t compare_substrings(size_t i, size_t j, size_t l) {
 /* This function checks for repetition */
 static size_t check_repetition(size_t i, size_t s) {
     /* No repetition when first line or uncompleted line left*/
-    if (i == 0) {
+    if (is_first_iter) {
+        memcpy(rep_array, local_buffer, s);
         return 0;
     }
-    if (!rep_valid) {
-        if (compare_substrings(i - s, i, s)) {
-            rep_valid_idx = i - s;
+    if (compare_substrings(i, s)) {
+        if (!rep_valid) {
             rep_valid = true;
             hex_repeated_write();
-            return 1;
-        } else {
-            rep_valid = false;
-            return 0;
         }
+        return 1;
     } else {
-        if (compare_substrings(rep_valid_idx, i, s)) {
-            return 1;
-        } else {
-            rep_valid = false;
-            return 0;
-        }
+        rep_valid = false;
+        memcpy(rep_array, local_buffer+i, s);
+        return 0;
     }
 }
 
-/* This function checks for repeating lines and returns the line in hex */
+/* This function writes into line buffer two hex chars */
 void hex_data_write(size_t l, size_t s) {
     /* Fill buffer with empty spaces */
     char fb, sb;
-    size_t i = 0;
-    for (; i < s; i += 2) {
+    size_t i;
+    for (i = 0; i < s; i += 2) {
         fb = local_buffer[l + i];
         sb = local_buffer[l + i + 1];
         hex_chars_write(fb, sb);
@@ -163,8 +162,7 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
             printk("Failed to copy from user buffer\n");
             return -1;
         }
-        i = 0;
-        for (; i < to_copy; i += DATA_LINE_SIZE) {
+        for (i = 0; i < to_copy; i += DATA_LINE_SIZE) {
             s = to_copy - i >= DATA_LINE_SIZE ? DATA_LINE_SIZE : to_copy - i;
             if (!check_repetition(i, s)) {
               hex_addr_write();
@@ -216,7 +214,6 @@ static int driver_close(struct inode *device_file, struct file *instance) {
     check_kernel_write(r);
     v_addr = 0;
     line_idx = 0;
-    rep_valid_idx = 0;
     rep_valid = false;
     is_first_iter = true;
     filp_close(output_file, NULL);
