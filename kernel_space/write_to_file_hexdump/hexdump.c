@@ -9,9 +9,11 @@
 #include <linux/string.h>
 
 #define DEVICE_NAME "hexdump"
-#define LINE_SIZE 16
+#define LINE_SIZE 48
+#define DATA_LINE_SIZE 16
 #define BUFFER_SIZE 65536
 #define OUTPUT_FILE "/tmp/loop"
+#define OUTPUT_FILE_TMP "/tmp/loop_tmp"
 #define IS_LITTLE_ENDIAN (*(unsigned char *)&(uint16_t){1})
 
 #if ( LINUX_VERSION_CODE >= KERNEL_VERSION( 6, 4, 0 ) )
@@ -22,6 +24,8 @@
 
 /* Variables for device and device class */
 static char* local_buffer = NULL;
+static char* line_buffer = NULL;
+static size_t line_idx = 0;
 static struct file* output_file = NULL;
 static struct class *dev_class;
 static struct cdev dev_device;
@@ -42,16 +46,16 @@ static void check_kernel_write(size_t r) {
 /* This function writes hex char into a file */
 static void hex_char_write(char c) {
     char hexbuffer[3];
-    size_t r;
+    size_t i;
     snprintf(hexbuffer, 3, "%02x", (unsigned char)c);
-    r = kernel_write(output_file, hexbuffer, 2, 0);
-    check_kernel_write(r);
+    for (i = 0; i < 2; ++i) {
+        line_buffer[line_idx++] = hexbuffer[i];
+    }
 }
 
 /* This function writes pair of hex chars into a file */
 static void hex_chars_write(char f, char s) {
-    size_t r = kernel_write(output_file, " ", 1, 0);
-    check_kernel_write(r);
+    line_buffer[line_idx++] = ' ';
     if (IS_LITTLE_ENDIAN) {
         hex_char_write(s);
         hex_char_write(f);
@@ -63,25 +67,22 @@ static void hex_chars_write(char f, char s) {
 
 /* This function writes hex address into a file */
 static void hex_addr_write(void) {
-    size_t r;
     char hex_buffer[8];
+    size_t i;
     snprintf(hex_buffer, 8, "%07x", v_addr);
     if (!is_first_iter) {
-        r = kernel_write(output_file, "\n", 1, 0);
-        check_kernel_write(r);
+        line_buffer[line_idx++] = '\n';
     }
-    r = kernel_write(output_file, hex_buffer, 7, 0);
-    check_kernel_write(r);
+    for (i = 0; i < 7; ++i) {
+        line_buffer[line_idx++] = hex_buffer[i];
+    }
 }
 
 /* This function writes repetition symbol into a file */
 static void hex_repeated_write(void) {
-    size_t r;
     if (!is_first_iter) {
-        r = kernel_write(output_file, "\n", 1, 0);
-        check_kernel_write(r);
-        r = kernel_write(output_file, "*", 1, 0);
-        check_kernel_write(r);
+        line_buffer[line_idx++] = '\n';
+        line_buffer[line_idx++] = '*';
     }
 }
 
@@ -136,16 +137,17 @@ void hex_data_write(size_t l, size_t s) {
 /* This function writes fills uncompleted spaces of the last line */
 static void empty_data_write(void) {
     size_t r_d;
-    size_t r, c;
+    size_t i, c;
     unsigned int p_addr;
     /* Count uncompleted data count in line */
-    if (v_addr % LINE_SIZE != 0) {
-        p_addr = (v_addr / LINE_SIZE) * LINE_SIZE;
-        r_d = LINE_SIZE - (v_addr - p_addr);
+    if (v_addr % DATA_LINE_SIZE != 0) {
+        p_addr = (v_addr / DATA_LINE_SIZE) * DATA_LINE_SIZE;
+        r_d = DATA_LINE_SIZE - (v_addr - p_addr);
         r_d = (r_d % 2 == 1) ? r_d - 1 : r_d;
         for (c = 0; c < r_d; c += 2) {
-            r = kernel_write(output_file, "     ", 5, 0);
-            check_kernel_write(r);
+            for (i = 0; i < 5; ++i) {
+                line_buffer[line_idx++] = ' ';
+            }
         }
     }
 }
@@ -162,13 +164,15 @@ static ssize_t driver_write(struct file *File, const char *user_buffer, size_t c
             return -1;
         }
         i = 0;
-        for (; i < to_copy; i += LINE_SIZE) {
-            s = to_copy - i >= LINE_SIZE ? LINE_SIZE : to_copy - i;
+        for (; i < to_copy; i += DATA_LINE_SIZE) {
+            s = to_copy - i >= DATA_LINE_SIZE ? DATA_LINE_SIZE : to_copy - i;
             if (!check_repetition(i, s)) {
               hex_addr_write();
               is_first_iter = false;
               hex_data_write(i, s);
             }
+            kernel_write(output_file, line_buffer, line_idx, 0);
+            line_idx = 0;
             v_addr += s;
         }
         total_written += to_copy;
@@ -192,6 +196,12 @@ static int driver_open(struct inode *device_file, struct file *instance) {
         printk("Failed to allocate local buffer\n");
         return -1;
     }
+    /* Buffer for line */
+    line_buffer = (char*)kmalloc(LINE_SIZE, GFP_KERNEL);
+    if (!line_buffer) {
+        printk("Failed to allocate line buffer\n");
+        return -1;
+    }
     printk("The device is opened\n");
     return 0;
 }
@@ -201,14 +211,17 @@ static int driver_close(struct inode *device_file, struct file *instance) {
     size_t r;
     if (!rep_valid) { empty_data_write();}
     hex_addr_write();
-    r = kernel_write(output_file, "\n", 1, 0);
+    line_buffer[line_idx++] = '\n';
+    r = kernel_write(output_file, line_buffer, line_idx, 0);
     check_kernel_write(r);
     v_addr = 0;
+    line_idx = 0;
     rep_valid_idx = 0;
     rep_valid = false;
     is_first_iter = true;
     filp_close(output_file, NULL);
     kfree(local_buffer);
+    kfree(line_buffer);
     printk("The device is closed\n");
     return 0;
 }
